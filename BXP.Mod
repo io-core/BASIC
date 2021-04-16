@@ -1580,6 +1580,7 @@ BEGIN Texts.OpenWriter(W); Texts.WriteString(W, "BX BASIC Compiler  3.16.2021");
   OXS.SetCommentStyle(OXS.basicstyle);
   OXS.SetSigCR(TRUE);
   OXS.SetSemiCR(TRUE);
+  OXS.SetRunes(FALSE);
 
 (*  NEW(dummy); dummy.class := OXB.Var; dummy.type := OXB.intType;
     expression := expression0; Type := Type0; FormalType := FormalType0 *)
