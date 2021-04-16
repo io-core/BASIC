@@ -873,24 +873,6 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
   PROCEDURE ProcedureType(ptype: OXB.Type; VAR parblksize: LONGINT);
     VAR obj: OXB.Object; size: LONGINT; nofpar: INTEGER;
   BEGIN ptype.base := OXB.noType; size := parblksize; nofpar := 0; ptype.dsc := NIL;
-    IF sym = OXS.lparen THEN
-      OXS.Get(sym);
-      IF sym = OXS.rparen THEN OXS.Get(sym)
-      ELSE FPSection(size, nofpar);
-        WHILE sym = OXS.semicolon DO OXS.Get(sym); FPSection(size, nofpar) END ;
-        Check(OXS.rparen, "no )")
-      END ;
-      IF sym = OXS.colon THEN  (*function*)
-        OXS.Get(sym);
-        IF sym = OXS.ident THEN
-          qualident(obj); ptype.base := obj.type;
-          IF ~((obj.class = OXB.Typ) & (obj.type.form IN {OXB.Byte .. OXB.Pointer, OXB.Proc})) THEN
-            OXS.Mark("illegal function type")
-          END
-        ELSE OXS.Mark("type identifier expected")
-        END
-      END
-    END ;
     ptype.nofpar := nofpar; parblksize := size
   END ProcedureType;
 
@@ -981,6 +963,7 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
       x: OXG.Item; tp: OXB.Type; ptbase: PtrBase;
       expo: BOOLEAN; id: OXS.Ident;
   BEGIN (*sync*) pbsList := NIL;
+(*
     IF (sym < OXS.const) & (sym # OXS.end) & (sym # OXS.return) THEN OXS.Mark("declaration?");
       REPEAT OXS.Get(sym) UNTIL (sym >= OXS.const) OR (sym = OXS.end) OR (sym = OXS.return)
     END ;
@@ -1033,6 +1016,7 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
         Check(OXS.semicolon, "; missing")
       END
     END ;
+*)
     varsize := (varsize + ccStackalign - 1) DIV ccStackalign * ccStackalign;
 (*    varsize := (varsize + 3) DIV 4 * 4; *)
     ptbase := pbsList;
@@ -1043,57 +1027,6 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
     IF (sym >= OXS.const) & (sym <= OXS.var) THEN OXS.Mark("declaration in bad order") END
   END Declarations;
 
-  (* begin-procedure-description
----
-**ProcedureDecl** matches the definition of a procedure or marks an error.
-  end-procedure-description *)
-  PROCEDURE ProcedureDecl;
-    VAR proc: OXB.Object;
-      type: OXB.Type;
-      procid: OXS.Ident;
-      x: OXG.Item;
-      locblksize, parblksize, L: LONGINT;
-      int: BOOLEAN;
-  BEGIN (* ProcedureDecl *) int := FALSE; OXS.Get(sym); 
-    IF sym = OXS.times THEN OXS.Get(sym); int := TRUE END ;
-    IF sym = OXS.ident THEN
-      OXS.CopyId(procid); OXS.Get(sym);
-      OXB.NewObj(proc, OXS.id, OXB.Const);
-      IF int THEN parblksize := 3 * ccWordsize ELSE parblksize := ccWordsize END ;
-      NEW(type); type.form := OXB.Proc; type.size := ccWordsize;
-      proc.type := type; proc.val := -1; proc.lev := level; 
-      CheckExport(proc.expo);
-      IF proc.expo THEN proc.exno := exno; INC(exno) END ;
-      OXB.OpenScope; INC(level); type.base := OXB.noType;
-      ProcedureType(type, parblksize);  (*formal parameter list*)
-      Check(OXS.semicolon, "no ;"); locblksize := parblksize; 
-      Declarations(locblksize);
-      proc.val := OXG.Here() * 4; proc.type.dsc := OXB.topScope.next;
-      IF sym = OXS.procedure THEN
-        L := 0; OXG.FJump(L);
-        REPEAT ProcedureDecl; Check(OXS.semicolon, "no ;") UNTIL sym # OXS.procedure;
-        OXG.FixOne(L); proc.val := OXG.Here() * 4; proc.type.dsc := OXB.topScope.next
-      END ;
-      OXG.Enter(parblksize, locblksize, ccWordsize, int);
-      IF sym = OXS.begin THEN OXS.Get(sym); StatSequence END ;
-      IF sym = OXS.return THEN
-        OXS.Get(sym); expression(x);
-        IF type.base = OXB.noType THEN OXS.Mark("this is not a function")
-        ELSIF ~CompTypes(type.base, x.type, FALSE) THEN OXS.Mark("wrong result type")
-        END
-      ELSIF type.base.form # OXB.NoTyp THEN
-        OXS.Mark("function without result"); type.base := OXB.noType
-      END ;
-      OXG.Return(type.base.form, x, locblksize, int);
-      OXB.CloseScope; DEC(level); Check(OXS.end, "no END");
-      IF sym = OXS.ident THEN
-        IF OXS.id # procid THEN OXS.Mark("no match") END ;
-        OXS.Get(sym)
-      ELSE OXS.Mark("no proc id")
-      END
-    ELSE OXS.Mark("proc id expected")
-    END
-  END ProcedureDecl;
 
   (* begin-procedure-description
 ---
@@ -1116,12 +1049,317 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
     END
   END Import;
 
+
   (* begin-procedure-description
 ---
-**Module** begins the recursive descent parsing of the source text and emits an object code file on completion or marks an error.
+**If** consumes an IF statement line or produces an error.
   end-procedure-description *)
-  PROCEDURE Module;
-    VAR key: LONGINT;
+  PROCEDURE If;
+  BEGIN IF sym = OXS.ident THEN OXS.Get(sym);
+          IF sym = OXS.eql THEN
+            WHILE (sym # OXS.eol) & (sym # OXS.eot) DO OXS.Get(sym) END
+          ELSE OXS.Mark("'=' expected")
+          END
+        ELSE OXS.Mark("variable expected")
+        END
+  END If;
+
+  (* begin-procedure-description
+---
+**Go** consumes an GO statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Go;
+    VAR sub: BOOLEAN;
+  BEGIN IF sym = OXS.to THEN OXS.Get(sym); sub := FALSE
+        ELSIF sym = OXS.sub THEN OXS.Get(sym); sub := TRUE
+        ELSE OXS.Mark("expected 'TO' or SUB'")
+        END ;
+        IF sym = OXS.int THEN OXS.Get(sym)
+        ELSE OXS.Mark("destination line number expected")
+        END
+  END Go;
+
+  (* begin-procedure-description
+---
+**On** consumes an ON statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE On;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END On;
+
+  (* begin-procedure-description
+---
+**To** consumes an TO statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE To;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END To;
+
+  (* begin-procedure-description
+---
+**Def** consumes an DEF statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Def;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Def;
+
+  (* begin-procedure-description
+---
+**Dim** consumes an DIM statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Dim;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Dim;
+
+  (* begin-procedure-description
+---
+**End** consumes an END statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE End;
+  BEGIN OXS.Get(sym)
+  END End;
+
+  (* begin-procedure-description
+---
+**For** consumes an FOR statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE For;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END For;
+
+  (* begin-procedure-description
+---
+**Let** consumes an LET statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Let;
+  BEGIN IF sym = OXS.ident THEN OXS.Get(sym);
+	  IF sym = OXS.eql THEN
+	    WHILE (sym # OXS.eol) & (sym # OXS.eot) DO OXS.Get(sym) END
+	  ELSE OXS.Mark("'=' expected")
+	  END
+        ELSE OXS.Mark("variable expected")
+        END
+  END Let;
+
+  (* begin-procedure-description
+---
+**Rem** consumes an REM statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Rem;
+  BEGIN
+    WHILE (sym # OXS.eol) & (sym # OXS.eot) DO OXS.Get(sym) END
+  END Rem;
+
+  (* begin-procedure-description
+---
+**Sub** consumes an SUB statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Sub;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Sub;
+
+  (* begin-procedure-description
+---
+**Base** consumes an BASE statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Base;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Base;
+
+  (* begin-procedure-description
+---
+**Data** consumes an DATA statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Data;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Data;
+
+  (* begin-procedure-description
+---
+**Goto** consumes an GOTO statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Goto;
+  BEGIN IF sym = OXS.int THEN OXS.Get(sym) 
+        ELSE OXS.Mark("destination line number expected")
+        END
+  END Goto;
+
+  (* begin-procedure-description
+---
+**Next** consumes an NEXT statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Next;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Next;
+
+  (* begin-procedure-description
+---
+**Read** consumes an READ statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Read;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Read;
+
+  (* begin-procedure-description
+---
+**Step** consumes an STEP statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Step;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Step;
+
+  (* begin-procedure-description
+---
+**Stop** consumes an STOP statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Stop;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Stop;
+
+  (* begin-procedure-description
+---
+**Then** consumes an THEN statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Then;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Then;
+
+  (* begin-procedure-description
+---
+**Gosub** consumes an GOSUB statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Gosub;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Gosub;
+
+  (* begin-procedure-description
+---
+**Input** consumes an INPUT statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Input;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Input;
+
+  (* begin-procedure-description
+---
+**Print** consumes an PRINT statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Print;
+  BEGIN IF sym = OXS.string THEN OXS.Get(sym)
+        ELSE OXS.Mark("string expected")
+        END
+  END Print;
+
+  (* begin-procedure-description
+---
+**Option** consumes an OPTION statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE xOption;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END xOption;
+
+  (* begin-procedure-description
+---
+**Return** consumes an RETURN statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Return;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Return;
+
+  (* begin-procedure-description
+---
+**Restore** consumes an RESTORE statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Restore;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Restore;
+
+  (* begin-procedure-description
+---
+**Randomize** consumes an RANDOMIZE statement line or produces an error.
+  end-procedure-description *)
+  PROCEDURE Randomize;
+  BEGIN OXS.Mark("Unimplemented statement")
+  END Randomize;
+
+
+  (* begin-procedure-description
+---
+**Run** prepares the Run command for the BASIC program.
+  end-procedure-description *)
+  PROCEDURE Run;
+    VAR proc: OXB.Object;
+      type: OXB.Type;
+      procid: OXS.Ident;
+      x: OXG.Item;
+      locblksize, parblksize, L, lineno: LONGINT;
+      int: BOOLEAN;
+  BEGIN (* ProcedureDecl *) int := FALSE; 
+
+      procid := "Run";
+      
+      OXB.NewObj(proc, procid, OXB.Const);  (* OXS.id *)
+      parblksize := ccWordsize ;
+      NEW(type); type.form := OXB.Proc; type.size := ccWordsize;
+      proc.type := type; proc.val := -1; proc.lev := level; 
+     
+      proc.exno := exno; INC(exno) ;
+
+      OXB.OpenScope; INC(level); type.base := OXB.noType;
+      ProcedureType(type, parblksize);  (*formal parameter list... none*)
+      locblksize := parblksize; 
+      Declarations(locblksize);
+      proc.val := OXG.Here() * 4; proc.type.dsc := OXB.topScope.next;
+
+      OXG.Enter(parblksize, locblksize, ccWordsize, int);
+
+
+      WHILE sym = OXS.int DO
+        lineno := OXS.ival; 
+        OXS.Get(sym);  
+        IF sym = OXS.if THEN OXS.Get(sym); If;
+        ELSIF sym = OXS.go THEN OXS.Get(sym); Go;
+        ELSIF sym = OXS.on THEN OXS.Get(sym); On;
+        ELSIF sym = OXS.to THEN OXS.Get(sym); To;
+        ELSIF sym = OXS.def THEN OXS.Get(sym); Def;
+        ELSIF sym = OXS.dim THEN OXS.Get(sym); Dim;
+        ELSIF sym = OXS.end THEN OXS.Get(sym); End;
+        ELSIF sym = OXS.for THEN OXS.Get(sym); For;
+        ELSIF sym = OXS.let THEN OXS.Get(sym); Let;
+        ELSIF sym = OXS.rem THEN OXS.Get(sym); Rem; 
+        ELSIF sym = OXS.sub THEN OXS.Get(sym); Sub;
+        ELSIF sym = OXS.base THEN OXS.Get(sym); Base;
+        ELSIF sym = OXS.data THEN OXS.Get(sym); Data;
+        ELSIF sym = OXS.goto THEN OXS.Get(sym); Goto;
+        ELSIF sym = OXS.next THEN OXS.Get(sym); Next;
+        ELSIF sym = OXS.read THEN OXS.Get(sym); Read;
+        ELSIF sym = OXS.step THEN OXS.Get(sym); Step;
+        ELSIF sym = OXS.stop THEN OXS.Get(sym); Stop;
+        ELSIF sym = OXS.then THEN OXS.Get(sym); Then;
+        ELSIF sym = OXS.gosub THEN OXS.Get(sym); Gosub;
+        ELSIF sym = OXS.input THEN OXS.Get(sym); Input;
+        ELSIF sym = OXS.print THEN OXS.Get(sym); Print;
+        (* ELSIF sym = OXS.option THEN OXS.Get(sym); Option; *)
+        ELSIF sym = OXS.return THEN OXS.Get(sym); Return;
+        ELSIF sym = OXS.restore THEN OXS.Get(sym); Restore;
+        ELSIF sym = OXS.randomize THEN OXS.Get(sym); Randomize;
+        ELSE OXS.Mark("Unrecognized command")
+        END ;
+        OXS.Get(sym)
+      END ;
+
+      OXG.Return(type.base.form, x, locblksize, int);
+      OXB.CloseScope; DEC(level); 
+
+  END Run;
+
+
+  (* begin-procedure-description
+---
+**Program** begins the parsing of the source text and emits an object code file on completion or marks an error.
+  end-procedure-description *)
+  PROCEDURE Program(VAR name: ARRAY OF CHAR);
+    VAR key: LONGINT; lineno: INTEGER;
   BEGIN Texts.WriteString(W, "  compiling "); OXS.Get(sym);
     IF OXS.ccARCH = OXS.RISC5 THEN Texts.WriteString(W, " for RISC5 ") END; 
     IF OXS.ccARCH = OXS.X8664 THEN Texts.WriteString(W, " for X8664 ") END; 
@@ -1129,32 +1367,17 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
     IF OXS.ccARCH = OXS.ARM32 THEN Texts.WriteString(W, " for ARM32 ") END; 
     IF OXS.ccARCH = OXS.RISCV64 THEN Texts.WriteString(W, " for RISCV64 ") END; 
     IF OXS.ccARCH = OXS.RISCV32 THEN Texts.WriteString(W, " for RISCV32 ") END; 
-    IF sym = OXS.module THEN
-      OXS.Get(sym);
+    modid := "Test"; 
+    Texts.WriteString(W, modid); Texts.Append(Oberon.Log, W.buf);
+    IF sym = OXS.int THEN
       IF sym = OXS.times THEN version := 0; dc := 8; Texts.Write(W, "*"); OXS.Get(sym) ELSE dc := 0; version := 1 END ;
-      OXB.Clear; OXB.OpenScope;
-      IF sym = OXS.ident THEN
-        OXS.CopyId(modid); OXS.Get(sym);
-        Texts.WriteString(W, modid); Texts.Append(Oberon.Log, W.buf)
-      ELSE OXS.Mark("identifier expected")
-      END ;
-      Check(OXS.semicolon, "no ;"); level := 0; exno := 1; key := 0;
-      IF sym = OXS.import THEN
-        OXS.Get(sym); Import;
-        WHILE sym = OXS.comma DO OXS.Get(sym); Import END ;
-        Check(OXS.semicolon, "; missing")
-      END ;
+      OXB.Clear; 
+      OXB.OpenScope; level := 0; exno := 1; key := 0;
       OXG.Open(version); Declarations(dc); OXG.SetDataSize((dc + 3) DIV 4 * 4);
-      WHILE sym = OXS.procedure DO ProcedureDecl; Check(OXS.semicolon, "no ;") END ;
+
+      Run;
       OXG.Header;
-      IF sym = OXS.begin THEN OXS.Get(sym); StatSequence END ;
-      Check(OXS.end, "no END");
-      IF sym = OXS.ident THEN
-        IF OXS.id # modid THEN OXS.Mark("no match") END ;
-        OXS.Get(sym)
-      ELSE OXS.Mark("identifier missing")
-      END ;
-      IF sym # OXS.period THEN OXS.Mark("period missing") END ;
+
       IF (OXS.errcnt = 0) & (version # 0) THEN
         OXB.Export(modid, newSF, key);
         IF newSF THEN Texts.WriteString(W, " new symbol file") END
@@ -1166,9 +1389,10 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
       END ;
       Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
       OXB.CloseScope; pbsList := NIL
-    ELSE OXS.Mark("must start with MODULE")
+    ELSE 
+      IF sym # OXS.eot THEN OXS.Mark("line number expected") END
     END
-  END Module;
+  END Program;
 
 (* begin-section-description
 ## ---------- Command Invocation
@@ -1200,7 +1424,73 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
 
   (* begin-procedure-description
 ---
-**Compile** locates the source code to a module, initializes the scanner, and begins parsing at 'Module'.
+**Prep** locates the source code to a module, initializes the scanner, and begins parsing at 'Module'.
+  end-procedure-description *)
+  PROCEDURE Prep;
+  BEGIN
+          OXB.Init(ccWordsize);
+
+          (*initialize universe with data types and in-line procedures;
+            INTEGER and LONGINT are register size in 32 and 64 bit systems.
+            REAL and LONGREAL resgister size in 32 and 64 bit systems.
+            LED, ADC, SBC; LDPSR, LDREG, REG, COND are not in language definition*)
+
+          OXB.Enter("UML",    OXB.SFunc, OXB.intType, 132);  (*functions*)
+          OXB.Enter("SBC",    OXB.SFunc, OXB.intType, 122);
+          OXB.Enter("ADC",    OXB.SFunc, OXB.intType, 112);
+          OXB.Enter("ROR",    OXB.SFunc, OXB.intType, 92);
+          OXB.Enter("ASR",    OXB.SFunc, OXB.intType, 82);
+          OXB.Enter("LSL",    OXB.SFunc, OXB.intType, 72);
+          OXB.Enter("LEN",    OXB.SFunc, OXB.intType, 61);
+          OXB.Enter("CHR",    OXB.SFunc, OXB.charType, 51);
+          OXB.Enter("ORD",    OXB.SFunc, OXB.intType, 41);
+          OXB.Enter("FLT",    OXB.SFunc, OXB.realType, 31);
+          OXB.Enter("FLOOR",  OXB.SFunc, OXB.intType, 21);
+          OXB.Enter("ODD",    OXB.SFunc, OXB.boolType, 11);
+          OXB.Enter("ABS",    OXB.SFunc, OXB.intType, 1);
+          OXB.Enter("LED",    OXB.SProc, OXB.noType, 81);  (*procedures*)
+          OXB.Enter("UNPK",   OXB.SProc, OXB.noType, 72);
+          OXB.Enter("PACK",   OXB.SProc, OXB.noType, 62);
+          OXB.Enter("NEW",    OXB.SProc, OXB.noType, 51);
+          OXB.Enter("ASSERT", OXB.SProc, OXB.noType, 41);
+          OXB.Enter("EXCL",   OXB.SProc, OXB.noType, 32);
+          OXB.Enter("INCL",   OXB.SProc, OXB.noType, 22);
+          OXB.Enter("DEC",    OXB.SProc, OXB.noType, 11);
+          OXB.Enter("INC",    OXB.SProc, OXB.noType, 1);
+          OXB.Enter("SET",    OXB.Typ,   OXB.setType, 0);   (*types*)
+          OXB.Enter("BOOLEAN",OXB.Typ,   OXB.boolType, 0);
+          OXB.Enter("BYTE",   OXB.Typ,   OXB.byteType, 0);
+          OXB.Enter("CHAR",   OXB.Typ,   OXB.charType, 0);
+          IF ccWordsize = 4 THEN OXB.Enter("LONGREAL", OXB.Typ, OXB.realType, 0) END;
+          IF ccWordsize = 8 THEN OXB.Enter("LONGREAL", OXB.Typ, OXB.doubleType, 0) END;
+                OXB.Enter("REAL",   OXB.Typ,   OXB.realType, 0);
+          IF ccWordsize = 4 THEN OXB.Enter("LONGINT",  OXB.Typ, OXB.intType, 0) END;
+          IF ccWordsize = 8 THEN OXB.Enter("LONGINT",  OXB.Typ, OXB.longType, 0) END;
+                OXB.Enter("INTEGER",OXB.Typ,   OXB.intType, 0);
+          IF ccWordsize = 8 THEN OXB.Enter("SHORTINT", OXB.Typ, OXB.shortType, 0) END;
+
+          OXB.PrepSYSTEM;
+
+          OXB.Enter("H",     OXB.SFunc, OXB.intType, 201);     (*functions*)
+          OXB.Enter("COND",  OXB.SFunc, OXB.boolType, 191);
+          OXB.Enter("SIZE",  OXB.SFunc, OXB.intType, 181);
+          OXB.Enter("ADR",   OXB.SFunc, OXB.intType, 171);
+          OXB.Enter("VAL",   OXB.SFunc, OXB.intType, 162);
+          OXB.Enter("REG",   OXB.SFunc, OXB.intType, 151);
+          OXB.Enter("BIT",   OXB.SFunc, OXB.boolType, 142);
+          OXB.Enter("REGREG",OXB.SProc, OXB.noType, 212);  (*procedures*)
+          OXB.Enter("LDREG", OXB.SProc, OXB.noType, 142);
+          OXB.Enter("LDPSR", OXB.SProc, OXB.noType, 131);
+          OXB.Enter("COPY",  OXB.SProc, OXB.noType, 123);
+          OXB.Enter("PUT",   OXB.SProc, OXB.noType, 112);
+          OXB.Enter("GET",   OXB.SProc, OXB.noType, 102);
+  END Prep;
+
+
+
+  (* begin-procedure-description
+---
+**Compile** locates the source code to a module, initializes the scanner, and begins parsing the source text.
   end-procedure-description *)
   PROCEDURE Compile*;
     VAR beg, end, time: LONGINT;
@@ -1212,11 +1502,11 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
       IF S.codepoint = ORD("@") THEN
         Option(S); Oberon.GetSelection(T, beg, end, time);
         IF time >= 0 THEN 
-          OXB.Init(ccWordsize);
+          Prep;
           NEW(dummy); dummy.class := OXB.Var; dummy.type := OXB.intType;
           expression := expression0; Type := Type0; FormalType := FormalType0;
           OXS.Init(T, beg, ccARCH, ccWordsize, ccStackalign); 
-          Module 
+          Program(S.s) 
         END
       ELSIF S.codepoint = ORD("^") THEN
         Option(S); Oberon.GetSelection(T, beg, end, time);
@@ -1225,11 +1515,11 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
           IF S.class = Texts.Name THEN
             Texts.WriteString(W, S.s); NEW(T); Texts.Open(T, S.s);
             IF T.len > 0 THEN 
-              OXB.Init(ccWordsize);
+              Prep;
               NEW(dummy); dummy.class := OXB.Var; dummy.type := OXB.intType;
               expression := expression0; Type := Type0; FormalType := FormalType0;
               OXS.Init(T, 0, ccARCH, ccWordsize, ccStackalign); 
-              Module
+              Program(S.s)
             END
           END
         END
@@ -1239,11 +1529,11 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
         NEW(T); Texts.Open(T, S.s);
         IF T.len > 0 THEN 
           Option(S); 
-          OXB.Init(ccWordsize);
+          Prep;
           NEW(dummy); dummy.class := OXB.Var; dummy.type := OXB.intType;
           expression := expression0; Type := Type0; FormalType := FormalType0;
           OXS.Init(T, 0, ccARCH, ccWordsize, ccStackalign); 
-          Module
+          Program(S.s)
         ELSE Texts.WriteString(W, S.s); Texts.WriteString(W, " not found");
           Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
         END ;
@@ -1257,8 +1547,40 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
 ---
 **The initialzation code for this module** opens a writer to print marked errors and initializes the Oberon parser state.
   end-procedure-description *)
-BEGIN (* OXB.Init(4); *) Texts.OpenWriter(W); Texts.WriteString(W, "OX Compiler  2.24.2021");
+BEGIN Texts.OpenWriter(W); Texts.WriteString(W, "BX BASIC Compiler  3.16.2021");
   Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+ 
+  OXS.EnterKW(OXS.if, "IF",2);
+  OXS.EnterKW(OXS.go, "GO",2);
+  OXS.EnterKW(OXS.on, "ON",2);
+  OXS.EnterKW(OXS.to, "TO",2);
+  OXS.EnterKW(OXS.def, "DEF",3);
+  OXS.EnterKW(OXS.dim, "DIM",3);
+  OXS.EnterKW(OXS.end, "END",3);
+  OXS.EnterKW(OXS.for, "FOR",3);
+  OXS.EnterKW(OXS.let, "LET",3);
+  OXS.EnterKW(OXS.rem, "REM",3);
+  OXS.EnterKW(OXS.sub, "SUB",3);
+  OXS.EnterKW(OXS.base, "BASE",4);
+  OXS.EnterKW(OXS.data, "DATA",4);
+  OXS.EnterKW(OXS.goto, "GOTO",4);
+  OXS.EnterKW(OXS.next, "NEXT",4);
+  OXS.EnterKW(OXS.read, "READ",4);
+  OXS.EnterKW(OXS.step, "STEP",4);
+  OXS.EnterKW(OXS.stop, "STOP",4);
+  OXS.EnterKW(OXS.then, "THEN",4);
+  OXS.EnterKW(OXS.gosub, "GOSUB",5);
+  OXS.EnterKW(OXS.input, "INPUT",5);
+  OXS.EnterKW(OXS.print, "PRINT",5);
+  OXS.EnterKW(OXS.option, "OPTION",6);
+  OXS.EnterKW(OXS.return, "RETURN",6);
+  OXS.EnterKW(OXS.restore, "RESTORE",7);
+  OXS.EnterKW(OXS.notasymbol, "",8);
+  OXS.EnterKW(OXS.randomize, "RANDOMIZE",9);
+  OXS.SetCommentStyle(OXS.basicstyle);
+  OXS.SetSigCR(TRUE);
+  OXS.SetSemiCR(TRUE);
+
 (*  NEW(dummy); dummy.class := OXB.Var; dummy.type := OXB.intType;
     expression := expression0; Type := Type0; FormalType := FormalType0 *)
 END BXP.
