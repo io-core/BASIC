@@ -1044,7 +1044,7 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
         END
       ELSE impid1 := impid
       END ;
-      OXB.Import(impid, impid1)
+      OXB.Import(impid, impid1, ccARCH)
     ELSE OXS.Mark("id expected")
     END
   END Import;
@@ -1379,11 +1379,11 @@ expression0 is assigned to the procedure variable `expression` to allow the forw
       OXG.Header;
 
       IF (OXS.errcnt = 0) & (version # 0) THEN
-        OXB.Export(modid, newSF, key);
+        OXB.Export(modid, newSF, key, ccARCH);
         IF newSF THEN Texts.WriteString(W, " new symbol file") END
       END ;
       IF OXS.errcnt = 0 THEN
-        OXG.Close(modid, key, exno);
+        OXG.Close(modid, key, exno, ccARCH);
         Texts.WriteInt(W, OXG.pc, 6); Texts.WriteInt(W, dc, 6); Texts.WriteHex(W, key)
       ELSE Texts.WriteLn(W); Texts.WriteString(W, "compilation FAILED")
       END ;
